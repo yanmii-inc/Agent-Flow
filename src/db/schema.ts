@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   complexity       TEXT CHECK(complexity IN ('simple','medium','complex')),
   token_usage      TEXT,
   confirmed        INTEGER NOT NULL DEFAULT 0,
+  has_own_workflow INTEGER NOT NULL DEFAULT 0,
   created_at       TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
 );

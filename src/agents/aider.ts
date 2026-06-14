@@ -9,12 +9,12 @@ export class AiderAdapter implements AgentAdapter {
   private messageQueue: AgentMessage[] = [];
   private streamActive = false;
 
-  async start(task: Task, worktreePath: string): Promise<void> {
+  async start(task: Task, worktreePath: string, prompt?: string): Promise<void> {
     this.abortController = new AbortController();
     this.messageQueue = [];
 
     const binary = 'aider';
-    const args = ['--message', task.description, '--no-auto-commits', '--yes'];
+    const args = ['--message', prompt ?? task.description, '--no-auto-commits', '--yes'];
 
     this.process = execa(binary, args, {
       cwd: worktreePath,

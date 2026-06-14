@@ -22,7 +22,7 @@ export class ClaudeAdapter implements AgentAdapter {
     this.db = db;
   }
 
-  async start(task: Task, worktreePath: string): Promise<void> {
+  async start(task: Task, worktreePath: string, prompt?: string): Promise<void> {
     this.abortController = new AbortController();
 
     const profile = task.agent_profile_id ? this.db.getAgentProfile(task.agent_profile_id) : undefined;
@@ -38,7 +38,7 @@ export class ClaudeAdapter implements AgentAdapter {
     }
 
     const gen = query({
-      prompt: task.description,
+      prompt: prompt ?? task.description,
       options,
     });
 

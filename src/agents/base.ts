@@ -37,6 +37,7 @@ export interface Task {
   complexity: Complexity | null;
   token_usage: string | null;
   confirmed: number;
+  has_own_workflow: number;
   created_at: string;
   updated_at: string;
 }
@@ -93,7 +94,8 @@ export interface PreflightResult {
 }
 
 export interface AgentAdapter {
-  start(task: Task, worktreePath: string): Promise<void>;
+  /** Start a new agent session. If `prompt` is provided it is used instead of `task.description`. */
+  start(task: Task, worktreePath: string, prompt?: string): Promise<void>;
   resume(sessionId: string, message: string): Promise<void>;
   stream(): AsyncIterable<AgentMessage>;
   getTokenUsage(): TokenUsage;

@@ -9,12 +9,12 @@ export class OpenCodeAdapter implements AgentAdapter {
   private messageQueue: AgentMessage[] = [];
   private streamActive = false;
 
-  async start(task: Task, worktreePath: string): Promise<void> {
+  async start(task: Task, worktreePath: string, prompt?: string): Promise<void> {
     this.abortController = new AbortController();
     this.messageQueue = [];
 
     const binary = 'opencode';
-    const args = ['--no-author-mode', '--non-interactive', task.description];
+    const args = ['--no-author-mode', '--non-interactive', prompt ?? task.description];
 
     this.process = execa(binary, args, {
       cwd: worktreePath,

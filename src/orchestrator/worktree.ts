@@ -38,47 +38,7 @@ export class WorktreeManager {
     return { path: worktreePath, branch };
   }
 
-  async commitAndPush(worktreePath: string, branch: string): Promise<void> {
-    const wtGit = simpleGit(worktreePath);
-    const status = await wtGit.status();
-
-    if (status.files.length > 0) {
-      await wtGit.add('.');
-      await wtGit.commit('agentflow: agent task completed');
-    }
-
-    await wtGit.push('origin', branch);
-  }
-
-  async openPr(worktreePath: string, branch: string, taskDescription: string): Promise<string> {
-    const wtGit = simpleGit(worktreePath);
-    const remotes = await wtGit.getRemotes(true);
-    const origin = remotes.find(r => r.name === 'origin');
-
-    if (!origin) {
-      throw new Error('No remote "origin" configured');
-    }
-
-    const repoFullName = origin.refs.push
-      .replace(/^git@[^:]+:|https:\/\/[^\/]+\//, '')
-      .replace(/\.git$/, '')
-      .trim();
-
-    const title = `agentflow: ${taskDescription.slice(0, 72)}${taskDescription.length > 72 ? '...' : ''}`;
-
-    const ghProcess = Bun.spawnSync([
-      'gh', 'pr', 'create',
-      '--repo', repoFullName,
-      '--head', branch,
-      '--title', title,
-      '--body', `This PR was created by agentflow.\n\n**Task description:**\n\n${taskDescription}`,
-    ]);
-
-    const prUrl = ghProcess.stdout.toString().trim();
-    return prUrl;
-  }
-
-  async cleanup(worktreePath: string, branch: string): Promise<void> {
+  async cleanup(worktreePath: string): Promise<void> {
     try {
       await this.git.raw(['worktree', 'remove', worktreePath]);
     } catch {}
@@ -87,14 +47,6 @@ export class WorktreeManager {
       if (existsSync(worktreePath)) {
         rmSync(worktreePath, { recursive: true, force: true });
       }
-    } catch {}
-
-    try {
-      await this.git.branch(['-D', branch]);
-    } catch {}
-
-    try {
-      await this.git.push(['origin', '--delete', branch]);
     } catch {}
   }
 }
