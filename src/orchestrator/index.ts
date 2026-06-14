@@ -6,6 +6,7 @@ import { AgentRegistry } from '../agents/registry';
 import { WorktreeManager } from './worktree';
 import { runPreflight } from './preflight';
 import { createTokenTracker, updateTokenUsage } from './tokens';
+import { deployAffectedTargets } from './deploy';
 
 export interface RunningTask {
   task: Task;
@@ -48,17 +49,12 @@ async function detectWorkflow(repoPath: string): Promise<boolean> {
 
 function buildAgentPrompt(description: string, hasWorkflow: boolean): string {
   if (hasWorkflow) {
-    // Repo has its own workflow — let it handle everything
     return description;
   }
-  // No workflow detected — inject fallback git/PR instructions
   return `${FALLBACK_INSTRUCTIONS}\n\n${description}`;
 }
 
 function parseRepoUrl(repoUrl: string): { owner: string; repo: string } {
-  // Handles both HTTPS and SSH formats:
-  //   https://github.com/owner/repo.git
-  //   git@github.com:owner/repo.git
   const cleaned = repoUrl
     .replace(/^git@[^:]+:/, '')
     .replace(/^https:\/\/[^\/]+\//, '')
@@ -68,24 +64,20 @@ function parseRepoUrl(repoUrl: string): { owner: string; repo: string } {
   return { owner: parts[0], repo: parts[1] ?? '' };
 }
 
-async function pollForPR(owner: string, repo: string, branch: string, token?: string): Promise<string | null> {
+async function pollGitHub(
+  url: string,
+  githubToken?: string,
+): Promise<any[] | null> {
   try {
     const headers: Record<string, string> = {
       Accept: 'application/vnd.github.v3+json',
     };
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
+    if (githubToken) {
+      headers.Authorization = `Bearer ${githubToken}`;
     }
-
-    const response = await fetch(
-      `https://api.github.com/repos/${owner}/${repo}/pulls?head=${encodeURIComponent(branch)}&state=open`,
-      { headers }
-    );
-
+    const response = await fetch(url, { headers });
     if (!response.ok) return null;
-
-    const prs = await response.json() as any[];
-    return prs[0]?.html_url ?? null;
+    return await response.json() as any[];
   } catch {
     return null;
   }
@@ -107,7 +99,6 @@ export class Orchestrator {
     const project = this.db.getProject(task.project_id);
     if (!project) throw new Error(`Project ${task.project_id} not found`);
 
-    // Preflight
     const preflight = await runPreflight(task.description);
     this.db.updateTask(task.id, { complexity: preflight.complexity });
 
@@ -115,19 +106,15 @@ export class Orchestrator {
       return;
     }
 
-    // Workflow detection
     const hasWorkflow = await detectWorkflow(project.local_path);
     this.db.updateTask(task.id, { status: 'running', has_own_workflow: hasWorkflow ? 1 : 0 });
 
-    // Create worktree
     const wt = new WorktreeManager(project.local_path);
     const { path: worktreePath, branch } = await wt.create(taskId, task.description);
     this.db.updateTask(task.id, { worktree_path: worktreePath, branch_name: branch });
 
-    // Build the agent prompt with optional fallback instructions
     const agentPrompt = buildAgentPrompt(task.description, hasWorkflow);
 
-    // Resolve and start agent
     const profile = task.agent_profile_id
       ? this.db.getAgentProfile(task.agent_profile_id)
       : undefined;
@@ -147,10 +134,9 @@ export class Orchestrator {
 
     createTokenTracker(taskId);
 
-    // Stream processing
     const { owner, repo } = parseRepoUrl(project.repo_url);
     const githubToken = process.env['GITHUB_TOKEN'];
-    this.processStream(taskId, adapter, wt, owner, repo, githubToken);
+    this.processStream(taskId, adapter, wt, owner, repo, project.local_path, githubToken);
   }
 
   private async processStream(
@@ -159,6 +145,7 @@ export class Orchestrator {
     wt: WorktreeManager,
     owner: string,
     repo: string,
+    repoPath: string,
     githubToken?: string,
   ): Promise<void> {
     const task = this.db.getTask(taskId)!;
@@ -171,8 +158,6 @@ export class Orchestrator {
 
         if (message.type === 'text') {
           this.db.appendLog(taskId, 'agent', message.content);
-
-          // Extract session_id from Claude SDK
           try {
             const parsed = JSON.parse(message.content);
             if (parsed.session_id) {
@@ -193,10 +178,9 @@ export class Orchestrator {
             session_id: sessionId,
           });
 
-          // Agent finished — poll for PR instead of managing git ourselves
           const currentTask = this.db.getTask(taskId);
           if (currentTask?.branch_name) {
-            await this.waitForPR(taskId, currentTask.branch_name, owner, repo, githubToken, wt);
+            await this.waitForPR(taskId, currentTask.branch_name, owner, repo, repoPath, githubToken, wt);
           }
         }
 
@@ -225,7 +209,11 @@ export class Orchestrator {
   }
 
   /**
-   * Poll GitHub every 30s for an open PR on the task's branch.
+   * Poll GitHub every 30s for the task's PR lifecycle:
+   *   pr_ready — PR was opened (head matches branch)
+   *   merged   — PR changed to merged state
+   *
+   * When merged, triggers deploy of affected targets.
    * Times out after 30 minutes.
    */
   private async waitForPR(
@@ -233,26 +221,62 @@ export class Orchestrator {
     branch: string,
     owner: string,
     repo: string,
+    repoPath: string,
     githubToken?: string,
     wt?: WorktreeManager,
   ): Promise<void> {
-    const maxAttempts = 60; // 30 seconds * 60 = 30 minutes
+    const maxAttempts = 60;
     const pollInterval = 30_000;
 
     for (let i = 0; i < maxAttempts; i++) {
-      const prUrl = await pollForPR(owner, repo, branch, githubToken);
-      if (prUrl) {
-        this.db.updateTask(taskId, { status: 'pr_ready', pr_url: prUrl });
-        const currentTask = this.db.getTask(taskId);
-        if (currentTask?.worktree_path && wt) {
-          await wt.cleanup(currentTask.worktree_path);
+      const encodedBranch = encodeURIComponent(branch);
+      const prs = await pollGitHub(
+        `https://api.github.com/repos/${owner}/${repo}/pulls?head=${encodedBranch}&state=all`,
+        githubToken,
+      );
+
+      if (prs && prs.length > 0) {
+        const pr = prs[0];
+
+        if (pr.merged_at || pr.merged) {
+          // PR was merged
+          this.db.updateTask(taskId, { status: 'merged', pr_url: pr.html_url });
+
+          // Deploy any affected targets
+          const currentTask = this.db.getTask(taskId);
+          if (currentTask && owner && repo) {
+            await deployAffectedTargets(
+              currentTask.project_id,
+              pr.html_url,
+              taskId,
+              this.db,
+              repoPath,
+              githubToken,
+            );
+          }
+
+          // Clean up worktree after merge + deploy
+          if (currentTask?.worktree_path && wt) {
+            await wt.cleanup(currentTask.worktree_path);
+          }
+          return;
         }
-        return;
+
+        if (pr.state === 'open') {
+          // PR is open but not yet merged — mark pr_ready if not already
+          const currentTask = this.db.getTask(taskId);
+          if (currentTask?.status !== 'pr_ready') {
+            this.db.updateTask(taskId, { status: 'pr_ready', pr_url: pr.html_url });
+            if (currentTask?.worktree_path && wt) {
+              await wt.cleanup(currentTask.worktree_path);
+            }
+          }
+        }
       }
+
       await new Promise(resolve => setTimeout(resolve, pollInterval));
     }
 
-    // Timeout — mark as failed
     this.db.updateTask(taskId, { status: 'failed' });
     const currentTask = this.db.getTask(taskId);
     if (currentTask?.worktree_path && wt) {
@@ -272,7 +296,7 @@ export class Orchestrator {
         const project = this.db.getProject(currentTask.project_id);
         const { owner, repo } = project ? parseRepoUrl(project.repo_url) : { owner: '', repo: '' };
         const githubToken = process.env['GITHUB_TOKEN'];
-        this.processStream(taskId, running.adapter, new WorktreeManager(''), owner, repo, githubToken);
+        this.processStream(taskId, running.adapter, new WorktreeManager(''), owner, repo, '', githubToken);
       }
     } else {
       throw new Error('Task not currently running; resume not implemented for completed tasks');

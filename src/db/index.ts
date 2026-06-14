@@ -2,13 +2,14 @@ import { Database } from 'bun:sqlite';
 import { SCHEMA_SQL } from './schema';
 import type {
   Project,
+  DeployTarget,
   AgentProfile,
   Task,
   TaskLog,
   CreateProjectInput,
   CreateAgentProfileInput,
   CreateTaskInput,
-  TaskStatus,
+  CreateDeployTargetInput,
 } from '../agents/base';
 
 export class Db {
@@ -30,10 +31,18 @@ export class Db {
   createProject(input: CreateProjectInput): Project {
     const id = crypto.randomUUID();
     const stmt = this.db.prepare(
-      `INSERT INTO projects (id, name, repo_url, local_path, agent_profile_id, deploy_config)
-       VALUES (?, ?, ?, ?, ?, ?)`
+      `INSERT INTO projects (id, name, repo_url, local_path, agent_profile_id)
+       VALUES (?, ?, ?, ?, ?)`
     );
-    stmt.run(id, input.name, input.repo_url, input.local_path, input.agent_profile_id ?? null, input.deploy_config ?? null);
+    stmt.run(id, input.name, input.repo_url, input.local_path, input.agent_profile_id ?? null);
+
+    // Create deploy targets if provided
+    if (input.targets) {
+      for (const t of input.targets) {
+        this.createDeployTarget({ project_id: id, ...t });
+      }
+    }
+
     return this.getProject(id)!;
   }
 
@@ -43,6 +52,45 @@ export class Db {
 
   listProjects(): Project[] {
     return this.db.prepare('SELECT * FROM projects ORDER BY created_at DESC').all() as Project[];
+  }
+
+  // ── Deploy Targets ────────────────────────────────────────
+
+  createDeployTarget(input: CreateDeployTargetInput & { project_id: string }): DeployTarget {
+    const id = crypto.randomUUID();
+    const stmt = this.db.prepare(
+      `INSERT INTO deploy_targets (id, project_id, name, path, deploy_command)
+       VALUES (?, ?, ?, ?, ?)`
+    );
+    stmt.run(id, input.project_id, input.name, input.path, input.deploy_command);
+    return this.getDeployTarget(id)!;
+  }
+
+  getDeployTarget(id: string): DeployTarget | undefined {
+    return this.db.prepare('SELECT * FROM deploy_targets WHERE id = ?').get(id) as DeployTarget | undefined;
+  }
+
+  getDeployTargets(projectId: string): DeployTarget[] {
+    return this.db.prepare(
+      'SELECT * FROM deploy_targets WHERE project_id = ? ORDER BY created_at ASC'
+    ).all(projectId) as DeployTarget[];
+  }
+
+  updateDeployTarget(
+    id: string,
+    updates: Partial<Pick<DeployTarget, 'name' | 'path' | 'deploy_command'>>
+  ): DeployTarget | undefined {
+    const fields = Object.keys(updates);
+    if (fields.length === 0) return this.getDeployTarget(id);
+    const setClause = fields.map(f => `${f} = ?`).join(', ');
+    const values = fields.map(f => (updates as any)[f]);
+    this.db.prepare(`UPDATE deploy_targets SET ${setClause} WHERE id = ?`).run(...values, id);
+    return this.getDeployTarget(id);
+  }
+
+  deleteDeployTarget(id: string): boolean {
+    const info = this.db.prepare('DELETE FROM deploy_targets WHERE id = ?').run(id);
+    return info.changes > 0;
   }
 
   // ── Agent Profiles ────────────────────────────────────────

@@ -6,7 +6,15 @@ export interface Project {
   repo_url: string;
   local_path: string;
   agent_profile_id: string | null;
-  deploy_config: string | null;
+  created_at: string;
+}
+
+export interface DeployTarget {
+  id: string;
+  project_id: string;
+  name: string;
+  path: string;
+  deploy_command: string;
   created_at: string;
 }
 
@@ -21,7 +29,7 @@ export interface AgentProfile {
 
 export type AgentType = 'claude' | 'opencode' | 'aider' | 'cline' | 'copilot';
 
-export type TaskStatus = 'pending' | 'running' | 'pr_ready' | 'merged' | 'failed';
+export type TaskStatus = 'pending' | 'running' | 'pr_ready' | 'merged' | 'deploying' | 'deployed' | 'deploy_failed' | 'failed';
 export type Complexity = 'simple' | 'medium' | 'complex';
 
 export interface Task {
@@ -57,7 +65,13 @@ export interface CreateProjectInput {
   repo_url: string;
   local_path: string;
   agent_profile_id?: string;
-  deploy_config?: string;
+  targets?: { name: string; path: string; deploy_command: string }[];
+}
+
+export interface CreateDeployTargetInput {
+  name: string;
+  path: string;
+  deploy_command: string;
 }
 
 export interface CreateAgentProfileInput {
