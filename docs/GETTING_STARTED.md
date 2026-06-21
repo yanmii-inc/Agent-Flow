@@ -10,8 +10,8 @@
 ## Install
 
 ```bash
-git clone <your-repo>/agentflow.git
-cd agentflow
+git clone <your-repo>/consign.git
+cd consign
 bun install
 ```
 

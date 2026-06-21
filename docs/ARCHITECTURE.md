@@ -69,7 +69,7 @@ For Claude Code, the `session_id` on the task enables resume with full context �
 ## Project Structure
 
 ```
-agentflow/
+consign/
 ├── src/
 │   ├── api/
 │   │   ├── routes/

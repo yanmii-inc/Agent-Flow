@@ -6,26 +6,26 @@
 |---|---|---|
 | `PORT` | `3000` | HTTP server port |
 | `HOST` | `0.0.0.0` | HTTP server host |
-| `AGENTFLOW_DB_PATH` | `agentflow.db` | SQLite database path |
+| `CONSIGN_DB_PATH` | `consign.db` | SQLite database path |
 | `ANTHROPIC_API_KEY` | — | API key for Claude (preflight + SDK) |
 
 ## System Service (Linux)
 
-Create `/etc/systemd/system/agentflow.service`:
+Create `/etc/systemd/system/consign.service`:
 
 ```ini
 [Unit]
-Description=agentflow
+Description=consign
 After=network.target
 
 [Service]
 Type=simple
 User=ubuntu
-WorkingDirectory=/opt/agentflow
-ExecStart=/opt/agentflow/agentflow
+WorkingDirectory=/opt/consign
+ExecStart=/opt/consign/consign
 Environment=PORT=3000
 Environment=HOST=0.0.0.0
-Environment=AGENTFLOW_DB_PATH=/opt/agentflow/data/agentflow.db
+Environment=CONSIGN_DB_PATH=/opt/consign/data/consign.db
 Environment=ANTHROPIC_API_KEY=sk-ant-...
 Restart=always
 
@@ -35,19 +35,19 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now agentflow
+sudo systemctl enable --now consign
 ```
 
 ## Single Binary
 
 ```bash
-bun build src/index.ts --compile --target=bun --outfile=agentflow
+bun build src/index.ts --compile --target=bun --outfile=consign
 ```
 
-This produces a self-contained executable at `./agentflow`. Copy it to your VM and run:
+This produces a self-contained executable at `./consign`. Copy it to your VM and run:
 
 ```bash
-./agentflow
+./consign
 ```
 
 ## Security
@@ -56,4 +56,4 @@ This produces a self-contained executable at `./agentflow`. Copy it to your VM a
 - Credentials are **never exposed** through the API
 - Tasks run in **isolated git worktrees** — agents can't touch `main`
 - The `permissionMode: 'acceptEdits'` option on Claude Code auto-accepts file edits without prompts in automated mode
-- Consider running agentflow behind a reverse proxy (nginx, Caddy) with TLS and optional auth
+- Consider running consign behind a reverse proxy (nginx, Caddy) with TLS and optional auth

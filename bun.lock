@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "agentflow",
+      "name": "consign",
       "dependencies": {
         "@anthropic-ai/claude-agent-sdk": "^0.1.0",
         "execa": "^9.5.0",

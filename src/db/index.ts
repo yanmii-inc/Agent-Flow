@@ -15,7 +15,7 @@ import type {
 export class Db {
   private db: Database;
 
-  constructor(path: string = 'agentflow.db') {
+  constructor(path: string = 'consign.db') {
     this.db = new Database(path);
     this.db.exec('PRAGMA journal_mode = WAL');
     this.db.exec('PRAGMA foreign_keys = ON');

@@ -22,7 +22,7 @@ const sseClients = new Map<string, Set<(msg: AgentMessage) => void>>();
  * Files that indicate a repo already has its own AI workflow setup.
  * Priority hierarchy (highest to lowest):
  *   1. Repo's own workflow setup (AGENTS.md, CLAUDE.md, skills, guardrails)
- *   2. agentflow fallback instructions (injected only if repo has nothing)
+ *   2. consign fallback instructions (injected only if repo has nothing)
  *   3. Agent's own built-in defaults
  */
 const WORKFLOW_INDICATORS = [

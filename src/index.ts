@@ -1,7 +1,7 @@
 import { Db } from './db/index';
 import { ApiServer } from './api/server';
 
-const dbPath = process.env['AGENTFLOW_DB_PATH'] ?? 'agentflow.db';
+const dbPath = process.env['CONSIGN_DB_PATH'] ?? 'consign.db';
 const port = parseInt(process.env['PORT'] ?? '3000', 10);
 const hostname = process.env['HOST'] ?? '0.0.0.0';
 
