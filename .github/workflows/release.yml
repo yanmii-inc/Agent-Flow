@@ -25,7 +25,20 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - run: bun install
       - run: bun run build:${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: consign-${{ matrix.target }}
+          path: consign-${{ matrix.target }}
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+      - run: |
+          mkdir -p assets && find . -type f -name 'consign-*' -exec mv {} assets/ \;
       - uses: softprops/action-gh-release@v2
         with:
-          files: consign-${{ matrix.target }}
+          files: assets/*
           generate_release_notes: true
