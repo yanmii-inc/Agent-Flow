@@ -16,40 +16,40 @@ Download the latest release for your platform — no Bun, no Node, nothing else 
 
 ```bash
 # macOS Apple Silicon
-curl -L https://github.com/yanmii-inc/Consign/releases/latest/download/consign-darwin-arm64 -o /usr/local/bin/consign && chmod +x /usr/local/bin/consign
+curl -L https://github.com/yanmii-inc/Mandor/releases/latest/download/mandor-darwin-arm64 -o /usr/local/bin/mandor && chmod +x /usr/local/bin/mandor
 
 # macOS Intel
-curl -L https://github.com/yanmii-inc/Consign/releases/latest/download/consign-darwin-x64 -o /usr/local/bin/consign && chmod +x /usr/local/bin/consign
+curl -L https://github.com/yanmii-inc/Mandor/releases/latest/download/mandor-darwin-x64 -o /usr/local/bin/mandor && chmod +x /usr/local/bin/mandor
 
 # Linux x64
-curl -L https://github.com/yanmii-inc/Consign/releases/latest/download/consign-linux-x64 -o /usr/local/bin/consign && chmod +x /usr/local/bin/consign
+curl -L https://github.com/yanmii-inc/Mandor/releases/latest/download/mandor-linux-x64 -o /usr/local/bin/mandor && chmod +x /usr/local/bin/mandor
 ```
 
 Then use it anywhere:
 
 ```bash
-consign init            # stamp the current directory
-consign                 # start the server (port 3000)
+mandor init            # stamp the current directory
+mandor                 # start the server (port 3000)
 ```
 
 ### Option 2: Build from source (requires Bun)
 
 ```bash
-git clone git@github.com:yanmii-inc/Consign.git
-cd consign
+git clone git@github.com:yanmii-inc/Mandor.git
+cd mandor
 bun install
 bun run build
 
-# The standalone binary is now at ./consign — copy it anywhere:
-cp consign /usr/local/bin/
-consign init
+# The standalone binary is now at ./mandor — copy it anywhere:
+cp mandor /usr/local/bin/
+mandor init
 ```
 
 ### Option 3: Run from source (no global install)
 
 ```bash
-git clone git@github.com:yanmii-inc/Consign.git
-cd consign
+git clone git@github.com:yanmii-inc/Mandor.git
+cd mandor
 bun install
 
 # Use via bun run from anywhere:
@@ -57,22 +57,22 @@ bun run init                        # stamp the current directory
 bun run start                       # start the server
 
 # Or link globally for bare usage:
-bun link && consign init
+bun link && mandor init
 ```
 
 The server starts on `http://0.0.0.0:3000`.
 
 ## Configure
 
-### Option A: Auto-discover with `.consign.json` (recommended)
+### Option A: Auto-discover with `.mandor.json` (recommended)
 
-Stamping a repo with a sign file lets the server auto-discover it. Run this inside any project you want consign to manage:
+Stamping a repo with a sign file lets the server auto-discover it. Run this inside any project you want mandor to manage:
 
 ```bash
-consign init
+mandor init
 ```
 
-This creates a `.consign.json` file in the current directory:
+This creates a `.mandor.json` file in the current directory:
 
 ```json
 {
@@ -90,18 +90,18 @@ This creates a `.consign.json` file in the current directory:
 You can stamp a directory explicitly:
 
 ```bash
-consign init custom-name     # uses "custom-name" instead of the directory name
+mandor init custom-name     # uses "custom-name" instead of the directory name
 ```
 
 #### Workspace Roots
 
-Tell the server where to look for `.consign.json` files via the `WORKSPACE_ROOTS` environment variable (JSON array or comma-separated paths):
+Tell the server where to look for `.mandor.json` files via the `WORKSPACE_ROOTS` environment variable (JSON array or comma-separated paths):
 
 ```bash
 export WORKSPACE_ROOTS='["~/code", "~/work"]'
 ```
 
-Or create a config file at `~/.consign/config.json`:
+Or create a config file at `~/.mandor/config.json`:
 
 ```json
 {
@@ -111,7 +111,7 @@ Or create a config file at `~/.consign/config.json`:
 
 Default: the server's current working directory (`process.cwd()`).
 
-The server scans these roots on startup and on every `POST /projects/scan` call. Projects whose `.consign.json` is removed are automatically deleted from the database.
+The server scans these roots on startup and on every `POST /projects/scan` call. Projects whose `.mandor.json` is removed are automatically deleted from the database.
 
 ```bash
 # Re-scan without restarting
@@ -136,17 +136,17 @@ Returns the scan result:
 
 #### CLI Scan
 
-The `consign scan` command runs a scan directly (no server needed):
+The `mandor scan` command runs a scan directly (no server needed):
 
 ```bash
 # Scan the current directory
-consign scan
+mandor scan
 
 # Scan specific directories
-consign scan ~/code ~/work
+mandor scan ~/code ~/work
 ```
 
-It creates a temporary database connection, runs the scan, and prints results. Useful when you're not running the server. Consumes the same `CONSIGN_DB_PATH` and `WORKSPACE_ROOTS` the server uses.
+It creates a temporary database connection, runs the scan, and prints results. Useful when you're not running the server. Consumes the same `MANDOR_DB_PATH` and `WORKSPACE_ROOTS` the server uses.
 
 ### Option B: Manual API (no sign file)
 

@@ -23,7 +23,7 @@ export class ApiServer {
       fetch: (req) => this.handleRequest(req),
     });
 
-    console.log(`consign API server running on http://${hostname}:${port}`);
+    console.log(`mandor API server running on http://${hostname}:${port}`);
   }
 
   stop(): void {

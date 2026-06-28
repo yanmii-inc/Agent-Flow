@@ -4,7 +4,7 @@ import { readFile, writeFile } from 'fs/promises';
 import { Db } from './db/index';
 import { scanWorkspaces } from './scan';
 
-const SIGN_FILE = '.consign.json';
+const SIGN_FILE = '.mandor.json';
 
 interface SignFile {
   name: string;
@@ -45,7 +45,7 @@ async function initCommand(nameOverride?: string): Promise<void> {
 }
 
 async function scanCommand(roots: string[]): Promise<void> {
-  const dbPath = process.env['CONSIGN_DB_PATH'] ?? 'consign.db';
+  const dbPath = process.env['MANDOR_DB_PATH'] ?? 'mandor.db';
   const db = new Db(dbPath);
 
   if (roots.length === 0) {
@@ -79,18 +79,18 @@ export async function runCLI(): Promise<void> {
       break;
     }
     default:
-      console.error('Usage: consign <command> [options]');
+      console.error('Usage: mandor <command> [options]');
       console.error('');
       console.error('Commands:');
-      console.error('  init [name]          Create a .consign.json sign file');
-      console.error('  scan [dir...]        Scan directories for .consign.json files and upsert projects');
+      console.error('  init [name]          Create a .mandor.json sign file');
+      console.error('  scan [dir...]        Scan directories for .mandor.json files and upsert projects');
       console.error('');
       console.error('Examples:');
-      console.error('  consign init');
-      console.error('  consign init my-app');
-      console.error('  consign scan');
-      console.error('  consign scan ~/code ~/work');
-      console.error('  consign scan ./my-project');
+      console.error('  mandor init');
+      console.error('  mandor init my-app');
+      console.error('  mandor scan');
+      console.error('  mandor scan ~/code ~/work');
+      console.error('  mandor scan ./my-project');
       process.exit(1);
   }
 }

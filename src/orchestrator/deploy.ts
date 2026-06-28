@@ -6,8 +6,8 @@ import type { DeployTarget } from '../agents/base';
  * On PR merge, detect which deploy targets are affected by changed files
  * and run their deploy commands.
  *
- * consign never assumes project structure — deploy targets are always
- * user-defined at project registration. consign never decides how or
+ * mandor never assumes project structure — deploy targets are always
+ * user-defined at project registration. mandor never decides how or
  * where to deploy — it only runs the deploy_command the user provides.
  *
  * @example
