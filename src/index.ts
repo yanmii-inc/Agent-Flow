@@ -9,7 +9,7 @@ if (process.argv.length > 2) {
   process.exit(0);
 }
 
-const dbPath = process.env['CONSIGN_DB_PATH'] ?? 'consign.db';
+const dbPath = process.env['MANDOR_DB_PATH'] ?? 'mandor.db';
 const port = parseInt(process.env['PORT'] ?? '3000', 10);
 const hostname = process.env['HOST'] ?? '0.0.0.0';
 
@@ -18,7 +18,7 @@ const server = new ApiServer(db);
 server.start(port, hostname);
 
 // Initial workspace scan
-console.log('Scanning workspace roots for .consign.json files...');
+console.log('Scanning workspace roots for .mandor.json files...');
 try {
   const result = scanWorkspaces(db);
   console.log(`Workspace scan complete: ${result.created} created, ${result.updated} updated, ${result.deleted} removed (${result.projects.length} total projects)`);

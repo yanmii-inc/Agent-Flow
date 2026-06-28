@@ -68,13 +68,13 @@ Returns `201` with the created project (including any targets).
 POST /projects/scan
 ```
 
-Scans directories for `.consign.json` sign files. Upserts discovered projects (keyed by `local_path`) and deletes stale scan-sourced projects whose sign file was removed.
+Scans directories for `.mandor.json` sign files. Upserts discovered projects (keyed by `local_path`) and deletes stale scan-sourced projects whose sign file was removed.
 
 The roots to scan are resolved in this order:
 
 1. `roots` field in the request body (optional)
 2. `WORKSPACE_ROOTS` env var (JSON array or comma-separated)
-3. `~/.consign/config.json` → `workspaceRoots`
+3. `~/.mandor/config.json` → `workspaceRoots`
 4. Server's current working directory (`process.cwd()`)
 
 Request body (optional):
@@ -117,7 +117,7 @@ Returns `200` with an array of projects. Each project now includes a `source` fi
 | `source` | Meaning |
 |---|---|
 | `manual` | Created via `POST /projects` — never auto-deleted |
-| `scan` | Discovered from a `.consign.json` sign file — auto-deleted when the file is removed |
+| `scan` | Discovered from a `.mandor.json` sign file — auto-deleted when the file is removed |
 
 ### Deploy Targets
 
@@ -337,10 +337,10 @@ Kills the running agent, cleans up the worktree, marks as failed. Returns `204`.
 ### Scan
 
 ```
-consign scan [dir...]
+mandor scan [dir...]
 ```
 
-Runs a workspace scan from the CLI (no server needed). Uses the same `CONSIGN_DB_PATH` and root resolution as the API endpoint.
+Runs a workspace scan from the CLI (no server needed). Uses the same `MANDOR_DB_PATH` and root resolution as the API endpoint.
 
 | Args | Behavior |
 |---|---|
@@ -348,17 +348,17 @@ Runs a workspace scan from the CLI (no server needed). Uses the same `CONSIGN_DB
 | `dir...` | Scans the given directories |
 
 ```bash
-consign scan
-consign scan ~/code ~/work
+mandor scan
+mandor scan ~/code ~/work
 ```
 
 ### Init
 
 ```
-consign init [name]
+mandor init [name]
 ```
 
-Creates a `.consign.json` sign file in the current directory.
+Creates a `.mandor.json` sign file in the current directory.
 
 | Args | Behavior |
 |---|---|

@@ -3,7 +3,7 @@ import path from 'path';
 import os from 'os';
 import type { Db } from './db/index';
 
-interface ConsignSignFile {
+interface MandorSignFile {
   name?: string;
   repo_url?: string;
   agent_profile_id?: string;
@@ -21,7 +21,7 @@ export function getWorkspaceRoots(): string[] {
   }
 
   try {
-    const configPath = path.join(os.homedir(), '.consign', 'config.json');
+    const configPath = path.join(os.homedir(), '.mandor', 'config.json');
     const config = JSON.parse(readFileSync(configPath, 'utf-8'));
     if (Array.isArray(config.workspaceRoots)) {
       return config.workspaceRoots.map((p: string) => p.replace(/^~/, os.homedir()));
@@ -46,7 +46,7 @@ function findSignFiles(root: string, maxDepth: number = 5): string[] {
           if (!entry.name.startsWith('.') && !entry.name.startsWith('node_modules')) {
             walk(fullPath, depth + 1);
           }
-        } else if (entry.name === '.consign.json') {
+        } else if (entry.name === '.mandor.json') {
           results.push(fullPath);
         }
       }
@@ -59,7 +59,7 @@ function findSignFiles(root: string, maxDepth: number = 5): string[] {
   return results;
 }
 
-function readSignFile(filePath: string): ConsignSignFile | null {
+function readSignFile(filePath: string): MandorSignFile | null {
   try {
     return JSON.parse(readFileSync(filePath, 'utf-8'));
   } catch {

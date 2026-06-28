@@ -4,7 +4,7 @@ dist/
 *.db-wal
 *.db-shm
 .worktrees/
-consign
+mandor
 .env
 .env.local
 .DS_Store
