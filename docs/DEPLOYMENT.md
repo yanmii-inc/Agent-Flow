@@ -15,7 +15,7 @@ The host is where the agents actually run, so it needs everything an agent needs
 | **GitHub CLI (`gh`), authenticated** | The agent pushes branches and opens PRs via `gh`. Run `gh auth login` on the host. Git must also have push credentials (SSH key or HTTPS). |
 | **Agent runtime + key** | Claude (default) needs only `ANTHROPIC_API_KEY` — its SDK is bundled. Other agents (OpenCode, Aider, …) need their CLI installed on the host. |
 | **Repos cloned locally** | mandor runs agents inside local clones; clone every repo you want to manage onto the host. |
-| **Disk** | Each task adds a worktree (a working copy of the repo) under `<repo>/.worktrees/`. Size them like extra checkouts; they're cleaned up after the PR is merged/cancelled. |
+| **Disk** | Each task adds a worktree (a full working copy of the repo) in a shared `.worktrees/` folder beside each repo. Size them like extra checkouts; they're cleaned up after the PR is merged or the task is cancelled. |
 
 ## Environment variables
 

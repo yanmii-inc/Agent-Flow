@@ -1,5 +1,44 @@
 # Architecture
 
+mandor is a single long-lived process — a Bun HTTP server backed by SQLite — that turns AI coding agents into a dispatchable, always-on crew. It owns the execution environment (your cloned repos, git/GitHub credentials, and agent API keys) so your devices only need to send tasks and read progress.
+
+> This document covers the **internals**: how a task flows through the system and how each piece is built. For the host/devices/network deployment model, see [Getting Started](GETTING_STARTED.md); for the HTTP surface, see the [API Reference](API.md).
+
+## System context
+
+```
+Devices (phone/laptop) ──HTTP/SSE──► mandor server (always-on host) ──git push + PR──► GitHub
+                                              │
+                                              ├── cloned repos (local_path)
+                                              ├── per-task git worktrees (.worktrees/<id>, beside each repo)
+                                              └── agent adapters (Claude SDK in-process · others as subprocess CLIs)
+```
+
+mandor is **stack-agnostic**: it knows nothing about your language, framework, or build system. It maps a task description to an isolated worktree, lets the agent work, and converts the result into a reviewable PR.
+
+## Request lifecycle
+
+A task flows through the orchestrator like this (`src/orchestrator/index.ts`):
+
+```
+POST /tasks ──► dispatchTask
+                 │
+                 1. resolve model:  task.model → profile.model → provider default
+                 2. preflight:      classify complexity (simple | medium | complex)
+                    └─ complex & not confirmed ──► stays pending (await POST /tasks/:id/confirm)
+                 3. worktree:       git worktree add → branch agent/<id>-<slug>, path <repo>/../.worktrees/<id>
+                 4. prompt:         repo's own workflow (AGENTS.md, CLAUDE.md, …) or mandor's commit/push/PR fallback
+                 5. adapter.start() Claude via SDK in-process; others as subprocess
+                 6. adapter.stream() ──► broadcast to SSE clients + append to task_logs
+                    ├─ capture session_id (enables mid-task resume)
+                    ├─ done ──► waitForPR  (poll GitHub every 30s, ≤ 30 min)
+                    │            ├─ PR open  ──► status pr_ready  (+ worktree cleanup)
+                    │            └─ PR merged──► status merged    (+ deploy targets + cleanup)
+                    └─ error ──► status failed  (+ worktree cleanup)
+```
+
+Mid-flight, `POST /tasks/:id/reply` resumes the agent session with full context, and `DELETE /tasks/:id` kills it and tears down the worktree. Every transition is persisted to `tasks`; every message to `task_logs` — so the conversation can be replayed from any device.
+
 ## Agent Adapter Pattern
 
 Every agent CLI is wrapped in a uniform interface at `src/agents/base.ts`:
