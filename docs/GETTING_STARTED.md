@@ -1,225 +1,282 @@
 # Getting Started
 
+This guide assumes you've never heard of mandor. By the end you'll have a server running on an always-on host, reachable from your phone, dispatching a coding task that ends in a Pull Request.
+
+---
+
+## The mental model: host, devices, network
+
+mandor is a **server**. Servers run *somewhere* and are reached *from elsewhere*. With mandor there are three pieces:
+
+```
+ ┌──────────────────────────┐        network         ┌─────────────────────────┐
+ │  YOUR DEVICES (clients)  │  ◄──── HTTP/SSE ────►  │  THE HOST (mandor)      │
+ │  phone · laptop · tablet │   Tailscale or proxy   │  repos · agents · keys  │
+ └──────────────────────────┘                         └─────────────────────────┘
+                                                                │
+                                                                │  git push + PR
+                                                                ▼
+                                                          ┌──────────┐
+                                                          │  GitHub  │
+                                                          └──────────┘
+```
+
+- **The host** is an always-on machine you control (a cloud VM, a home server, a Mac mini, even an old laptop that stays plugged in). It holds the things the agents need: your **cloned repos**, your **git + GitHub credentials**, your **agent API keys**, and the **agent runtimes**. mandor runs here as a single binary.
+- **Your devices** are *thin clients*. They do nothing but send HTTP requests (`POST /tasks`) and read live progress (SSE). A phone has no git, no agents, no keys — it just talks to the host.
+- **The network** is how your devices reach the host. The easiest, safest default is a private mesh VPN like [Tailscale](https://tailscale.com) (no port forwarding, end-to-end encrypted). For public access you'd put mandor behind a reverse proxy with TLS and auth.
+
+> **Key idea:** agents run **on the host**, never on your phone. Your phone only sends the order and watches the result.
+
+---
+
 ## Prerequisites
 
-- Git >= 2.30
-- [GitHub CLI](https://cli.github.com) `gh` (for automated PRs)
-- An API key for your chosen agent (e.g. `ANTHROPIC_API_KEY` for Claude)
+### Infrastructure
 
-## Install
+| Requirement | Why | Notes |
+|---|---|---|
+| **An always-on host** | Agents run here; tasks take minutes to hours and your phone won't be the one working | A $5/mo cloud VM (DigitalOcean/Hetzner/AWS), a home server, or any machine that stays on. 1 vCPU / 1 GB RAM is enough to start. |
+| **Network path to the host** | So your phone/laptop can reach mandor's HTTP port | **Tailscale** (recommended — install on host + device, done) **or** a public domain + reverse proxy (Caddy/nginx) with TLS. |
+| **A GitHub account + repo access** | mandor pushes branches and opens PRs on your behalf | The host must be able to push to your repos and create PRs (see below). |
 
-You have three options, depending on whether you want to build from source or just use the server binary.
+### Software (installed on the host)
 
-### Option 1: Pre-built binary (easiest, no toolchain needed)
+- **Git** ≥ 2.20 — mandor creates `git worktree`s per task.
+- **[GitHub CLI](https://cli.github.com) (`gh`)**, authenticated (`gh auth login`) — the agent uses it to push branches and open PRs. Your git must also be able to push (SSH key or HTTPS credential helper).
+- **An agent runtime + API key:**
+  - **Claude (default, recommended)** — works out of the box: the SDK is bundled in the binary. You only need an `ANTHROPIC_API_KEY`.
+  - **Other agents** (OpenCode, Aider, Cline, Copilot CLI) — install their CLI on the host and reference it via the profile's `cli_path`. They run as subprocesses.
+- *(Optional)* **[Bun](https://bun.sh)** — only if you build from source or run from source instead of using the pre-built binary.
 
-Download the latest release for your platform — no Bun, no Node, nothing else required.
+> Nothing is installed on your phone/laptop/tablet except a way to reach the host (e.g. the Tailscale app) and any HTTP client (a browser, `curl`, or a small script).
+
+---
+
+## Step 1 — Set up the host
+
+SSH into your always-on host and install mandor.
+
+### Install the binary (no toolchain needed)
 
 ```bash
+# Linux x64
+curl -L https://github.com/yanmii-inc/Mandor/releases/latest/download/mandor-linux-x64 -o /usr/local/bin/mandor && chmod +x /usr/local/bin/mandor
+
 # macOS Apple Silicon
 curl -L https://github.com/yanmii-inc/Mandor/releases/latest/download/mandor-darwin-arm64 -o /usr/local/bin/mandor && chmod +x /usr/local/bin/mandor
 
 # macOS Intel
 curl -L https://github.com/yanmii-inc/Mandor/releases/latest/download/mandor-darwin-x64 -o /usr/local/bin/mandor && chmod +x /usr/local/bin/mandor
-
-# Linux x64
-curl -L https://github.com/yanmii-inc/Mandor/releases/latest/download/mandor-linux-x64 -o /usr/local/bin/mandor && chmod +x /usr/local/bin/mandor
 ```
 
-Then use it anywhere:
+<details>
+<summary>Build from source instead (requires Bun)</summary>
 
 ```bash
-mandor init            # stamp the current directory
-mandor                 # start the server (port 3000)
-```
-
-### Option 2: Build from source (requires Bun)
-
-```bash
-git clone git@github.com:yanmii-inc/Mandor.git
-cd mandor
-bun install
-bun run build
-
-# The standalone binary is now at ./mandor — copy it anywhere:
+git clone https://github.com/yanmii-inc/Mandor.git
+cd mandor && bun install && bun run build
 cp mandor /usr/local/bin/
-mandor init
 ```
 
-### Option 3: Run from source (no global install)
+Or run directly from source without a global install: `bun run start` (server) / `bun run init`.
+
+</details>
+
+### Authenticate git + GitHub on the host
+
+The agent will commit, push, and open PRs *as you* from this machine, so set up credentials once:
 
 ```bash
-git clone git@github.com:yanmii-inc/Mandor.git
-cd mandor
-bun install
-
-# Use via bun run from anywhere:
-bun run init                        # stamp the current directory
-bun run start                       # start the server
-
-# Or link globally for bare usage:
-bun link && mandor init
+gh auth login          # authenticates gh AND configures git credentials
+ssh-keygen ...         # (if your repos use SSH) add the key to GitHub
+ssh -T git@github.com  # verify push access
 ```
 
-The server starts on `http://0.0.0.0:3000`.
+### Clone the repos you want to manage
 
-## Configure
-
-### Option A: Auto-discover with `.mandor.json` (recommended)
-
-Stamping a repo with a sign file lets the server auto-discover it. Run this inside any project you want mandor to manage:
+mandor runs agents inside **local clones** — so every repo you want to work on must be cloned onto the host:
 
 ```bash
-mandor init
+mkdir -p ~/code && cd ~/code
+git clone git@github.com:you/my-app.git
+git clone git@github.com:you/another-repo.git
 ```
 
-This creates a `.mandor.json` file in the current directory:
+### Set your agent API key
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...     # for Claude (also usable for preflight)
+# Optionally, for other providers:
+# export GEMINI_API_KEY=...
+# export GLM_API_KEY=...
+# export GITHUB_TOKEN=ghp_...           # used to poll PR state
+```
+
+(Put these in a `.env` or your service definition so they persist — see [Deployment](DEPLOYMENT.md).)
+
+---
+
+## Step 2 — Make the host reachable from your devices
+
+You have two good options. **Tailscale is the recommended default** — it's private, encrypted, and needs no port forwarding.
+
+### Option A — Tailscale (recommended, private)
+
+1. Install Tailscale on the **host** and on your **device** (phone/laptop): follow [tailscale.com/download](https://tailscale.com/download).
+2. Sign both into the same tailnet.
+3. The host now has a stable private address — either its Tailscale IP (`100.x.y.z`) or a [MagicDNS](https://tailscale.com/kb/1081/magicdns) name. Your device reaches mandor at, e.g.:
+
+   ```
+   http://mandor-host:3000      # or  http://100.x.y.z:3000
+   ```
+
+That's it — your phone can now talk to mandor over an encrypted link, and nobody else on the internet can.
+
+### Option B — Public reverse proxy (if you need a public URL)
+
+Put mandor behind a TLS-terminating proxy with an auth layer. **The mandor API has no built-in authentication**, so do **not** expose `:3000` directly to the public internet. A minimal [Caddy](https://caddyserver.com) example:
+
+```caddyfile
+mandor.example.com {
+    basicauth /* {
+        your-user $2a$14$...bcrypt-hash...
+    }
+    reverse_proxy localhost:3000
+}
+```
+
+Now your devices use `https://mandor.example.com`. (See [Deployment](DEPLOYMENT.md) for the full proxy + security notes.)
+
+---
+
+## Step 3 — Register your projects
+
+Stamp each cloned repo so the server can discover it:
+
+```bash
+cd ~/code/my-app
+mandor init                 # creates a .mandor.json sign file (name from the dir)
+mandor init custom-name     # ...or override the name
+```
+
+The sign file:
 
 ```json
 {
   "name": "my-app",
-  "repo_url": "https://github.com/you/my-app.git"
+  "repo_url": "git@github.com:you/my-app.git"
 }
 ```
 
-| Field | Description |
-|---|---|
-| `name` | Project name (defaults to directory name; pass an arg to override) |
-| `repo_url` | Detected from `git remote get-url origin` (omitted if no git remote) |
-| `agent_profile_id` | Optional — can be added manually later |
-
-You can stamp a directory explicitly:
+Tell mandor **where** to look for these files. Set workspace roots via env, a config file, or just run it from the parent directory:
 
 ```bash
-mandor init custom-name     # uses "custom-name" instead of the directory name
+export WORKSPACE_ROOTS='["~/code", "~/work"]'     # JSON array or comma-separated
+# or create ~/.mandor/config.json: { "workspaceRoots": ["~/code"] }
 ```
 
-#### Workspace Roots
+---
 
-Tell the server where to look for `.mandor.json` files via the `WORKSPACE_ROOTS` environment variable (JSON array or comma-separated paths):
+## Step 4 — Start the server
 
 ```bash
-export WORKSPACE_ROOTS='["~/code", "~/work"]'
+mandor                      # starts on http://0.0.0.0:3000
 ```
 
-Or create a config file at `~/.mandor/config.json`:
+On startup it scans your workspace roots and registers every repo that has a `.mandor.json`. For a production setup (auto-restart, on-boot) run it under systemd — see [Deployment](DEPLOYMENT.md).
 
-```json
-{
-  "workspaceRoots": ["~/code", "~/work"]
-}
-```
-
-Default: the server's current working directory (`process.cwd()`).
-
-The server scans these roots on startup and on every `POST /projects/scan` call. Projects whose `.mandor.json` is removed are automatically deleted from the database.
+You can also re-scan without restarting:
 
 ```bash
-# Re-scan without restarting
 curl -X POST http://localhost:3000/projects/scan
-
-# Scan specific directories
-curl -X POST http://localhost:3000/projects/scan \
-  -H 'Content-Type: application/json' \
-  -d '{"roots": ["~/code", "~/work"]}'
 ```
 
-Returns the scan result:
+---
 
-```json
-{
-  "created": 2,
-  "updated": 1,
-  "deleted": 0,
-  "projects": [ ... ]
-}
-```
+## Step 5 — Create an agent profile
 
-#### CLI Scan
-
-The `mandor scan` command runs a scan directly (no server needed):
-
-```bash
-# Scan the current directory
-mandor scan
-
-# Scan specific directories
-mandor scan ~/code ~/work
-```
-
-It creates a temporary database connection, runs the scan, and prints results. Useful when you're not running the server. Consumes the same `MANDOR_DB_PATH` and `WORKSPACE_ROOTS` the server uses.
-
-### Option B: Manual API (no sign file)
-
-```bash
-curl -X POST http://localhost:3000/projects \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "name": "my-app",
-    "repo_url": "https://github.com/you/my-app.git",
-    "local_path": "/home/ubuntu/my-app"
-  }'
-```
-
-| Field | Required | Description |
-|---|---|---|
-| `name` | yes | Human-readable project name |
-| `repo_url` | yes | Git remote URL |
-| `local_path` | yes | Path where the repo is cloned on the VM |
-| `agent_profile_id` | no | Default agent profile for this project |
-| `targets` | no | Array of deploy target objects |
-
-Manually created projects have `source: "manual"` and are never auto-deleted by workspace scans.
-
-### Create an Agent Profile
+A profile binds a name to an agent type (and optionally an API key / model). From the host:
 
 ```bash
 curl -X POST http://localhost:3000/agent-profiles \
   -H 'Content-Type: application/json' \
-  -d '{
-    "name": "claude-dev",
-    "agent_type": "claude"
-  }'
+  -d '{"name":"claude-dev","agent_type":"claude"}'
 ```
 
-Valid `agent_type` values: `claude`, `opencode`, `aider`, `cline`, `copilot`
+Valid `agent_type`: `claude`, `gemini`, `glm`, `opencode`, `aider`, `cline`, `copilot`.
+The API key is read from the profile's `credentials_encrypted` or the matching env var (`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GLM_API_KEY`).
 
-## Dispatch Your First Task
+Grab a project id and (optionally) set it as the project's default profile:
+
+```bash
+curl http://localhost:3000/projects
+```
+
+---
+
+## Step 6 — Dispatch your first task
+
+### From the host (sanity check)
 
 ```bash
 curl -X POST http://localhost:3000/tasks \
   -H 'Content-Type: application/json' \
   -d '{
-    "project_id": "<project-id>",
-    "description": "Add user authentication with JWT tokens"
+    "project_id":"<project-id>",
+    "description":"Add JWT-based authentication"
   }'
 ```
 
-### Watch It Work
+### From your phone 📱
+
+This is the whole point. With the host reachable (Step 2), fire the same request from *anywhere* — your phone's browser, a shortcut, a script:
 
 ```bash
-curl -N http://localhost:3000/tasks/<task-id>/logs
-```
-
-This opens an SSE stream — you'll see the agent's output in real-time.
-
-### Send a Follow-Up
-
-```bash
-curl -X POST http://localhost:3000/tasks/<task-id>/reply \
+curl -X POST http://mandor-host:3000/tasks \
   -H 'Content-Type: application/json' \
-  -d '{"message": "Add rate limiting too"}'
+  -d '{"project_id":"<project-id>","description":"Fix the flaky checkout test"}'
 ```
 
-### Approve a Complex Task
+You'll get back a `task_id`. A fast model first classifies the task's complexity — anything `complex` stays `pending` until you confirm it (a guardrail against runaway work).
 
-If preflight flags a task as `complex`, it stays `pending`. Approve it:
+---
+
+## Step 7 — Watch it work, then review
+
+**Watch live** (SSE stream — open from any device):
 
 ```bash
-curl -X POST http://localhost:3000/tasks/<task-id>/confirm
+curl -N http://mandor-host:3000/tasks/<task-id>/logs
 ```
 
-### Kill a Running Task
+You'll see the agent's reasoning and tool calls in real time. Other things you can do mid-flight:
 
 ```bash
-curl -X DELETE http://localhost:3000/tasks/<task-id>
+# Send a follow-up — the agent continues with full context (Claude sessions)
+curl -X POST http://mandor-host:3000/tasks/<task-id>/reply \
+  -H 'Content-Type: application/json' -d '{"message":"Also add rate limiting"}'
+
+# Approve a task that preflight flagged as complex
+curl -X POST http://mandor-host:3000/tasks/<task-id>/confirm
+
+# Cancel a running task (kills the agent, cleans up its worktree)
+curl -X DELETE http://mandor-host:3000/tasks/<task-id>
 ```
+
+When the agent finishes, it commits, pushes a branch, and opens a **Pull Request**. The task moves to `pr_ready`, then `merged` once you merge it on GitHub.
+
+```
+pending ──► running ──► pr_ready ──► merged
+                │                  │
+                └──► failed        └──► failed
+```
+
+Review and merge the PR from anywhere — your phone included. 🎉
+
+---
+
+## Where to go next
+
+- **[API Reference](API.md)** — every endpoint (projects, tasks, agents, tokens, models).
+- **[Architecture](ARCHITECTURE.md)** — agent adapter pattern, worktree isolation, preflight, data model.
+- **[Deployment](DEPLOYMENT.md)** — systemd unit, env vars, networking, and security hardening.
