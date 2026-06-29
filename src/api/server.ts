@@ -3,6 +3,7 @@ import { Orchestrator } from '../orchestrator/index';
 import { handleProjects } from './routes/projects';
 import { handleAgents } from './routes/agents';
 import { handleTasks } from './routes/tasks';
+import { handleThreads } from './routes/threads';
 import { handleTokens } from './routes/tokens';
 import { handleModels } from './routes/models';
 
@@ -60,6 +61,7 @@ export class ApiServer {
 
     const url = new URL(req.url);
     const path = url.pathname;
+    const startedAt = Date.now();
 
     try {
       let res: Response;
@@ -69,6 +71,8 @@ export class ApiServer {
         res = await handleAgents(req, this.db);
       } else if (path === '/tasks' || path.startsWith('/tasks/')) {
         res = await handleTasks(req, this.db, this.orchestrator);
+      } else if (path === '/threads' || path.startsWith('/threads/')) {
+        res = await handleThreads(req, this.db, this.orchestrator);
       } else if (path === '/tokens') {
         res = await handleTokens(req, this.db);
       } else if (path === '/models') {
@@ -76,8 +80,10 @@ export class ApiServer {
       } else {
         res = Response.json({ error: 'Not found' }, { status: 404 });
       }
+      console.log(`[api] ${req.method} ${path} -> ${res.status} (${Date.now() - startedAt}ms)`);
       return this.addCors(res);
     } catch (err: any) {
+      console.error(`[api] ${req.method} ${path} -> 500 (${Date.now() - startedAt}ms):`, err?.message);
       return this.addCors(Response.json({ error: err.message }, { status: 500 }));
     }
   }

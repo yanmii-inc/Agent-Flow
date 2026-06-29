@@ -332,6 +332,130 @@ DELETE /tasks/:id
 
 Kills the running agent, cleans up the worktree, marks as failed. Returns `204`.
 
+## Threads
+
+A **thread** is a non-PR agent conversation — brainstorming, codebase questions, "how does X work?". Unlike a task, a thread creates no worktree, runs no preflight, never commits/pushes/opens a PR, and never deploys. It runs **read-only** against the project's real repo and persists a `session_id` so the conversation resumes turn after turn.
+
+Threads require an agent that supports resume:
+
+| `agent_type` | Resume mechanism |
+|---|---|
+| `claude` | Native session resume |
+| `gemini`, `glm` | Resume by rebuilding context from stored history |
+| `opencode`, `aider`, `cline`, `copilot` | Not supported — rejected with `400` |
+
+Read-only behavior:
+
+- `claude` threads run in Claude's `plan` mode (read, search, reason — no edits).
+- `gemini`/`glm` threads expose only `read_file` (no grep/glob/bash in this release).
+
+### Model Resolution
+
+Same as tasks:
+
+```
+thread.model → profile.model → provider default (from catalog)
+```
+
+### Create a Thread
+
+```
+POST /threads
+```
+
+```json
+{
+  "project_id": "uuid",
+  "message": "How does the orchestrator decide when a task is done?",
+  "agent_profile_id": "optional-uuid",
+  "title": "optional title",
+  "model": "claude-sonnet-4-5-20250929"
+}
+```
+
+- `message` — the first user turn (required)
+- `agent_profile_id` — overrides the project's default profile; must be a resumable type (`claude`/`gemini`/`glm`)
+- `title` — optional; defaults to the first 60 characters of `message`
+- `model` — overrides the profile's default model (validated against the resolved provider)
+
+Returns `201` with the created thread. The first turn runs immediately; `session_id` is populated from the stream as the agent responds:
+
+```json
+{
+  "id": "uuid",
+  "project_id": "uuid",
+  "agent_profile_id": "uuid",
+  "title": "How does the orchestrator decide when a task is done?",
+  "session_id": "dc44cfab-...",
+  "model": null,
+  "token_usage": null,
+  "created_at": "2026-06-29 14:02:53",
+  "updated_at": "2026-06-29 14:02:53"
+}
+```
+
+A thread with no `session_id` cannot be replied to (its first turn didn't complete).
+
+### List Threads
+
+```
+GET /threads
+GET /threads?project_id=<uuid>
+```
+
+Returns `200` with an array of threads.
+
+### Get Thread Detail
+
+```
+GET /threads/:id
+```
+
+Returns `200` with the thread object, or `404`.
+
+### Reply to a Thread
+
+```
+POST /threads/:id/reply
+```
+
+```json
+{
+  "message": "Summarize that in one sentence."
+}
+```
+
+Resumes the conversation via the thread's `session_id` (native for Claude; history-rebuild for gemini/glm). Returns `200`.
+
+Returns `409` if a turn is already in progress for this thread, or `400` if the thread has no `session_id` yet.
+
+### Stream Thread Logs (SSE)
+
+```
+GET /threads/:id/logs
+```
+
+Returns a `text/event-stream`. Existing messages are replayed first, then live turns are streamed. Unlike `/tasks/:id/logs`, a thread stream **stays open across turns** — it closes only when the client disconnects. A `message` with `type: "done"` signals that a single turn finished, not that the stream ended.
+
+```
+event: log
+data: {"id":1,"thread_id":"...","role":"user","chunk":"How does...","timestamp":"..."}
+
+event: message
+data: {"type":"text","content":"The orchestrator polls GitHub...","timestamp":"..."}
+
+event: error
+data: {"message":"..."}
+```
+
+### Delete a Thread
+
+```
+DELETE /threads/:id
+```
+
+Aborts any in-flight turn and deletes the thread and its messages. Returns `204`.
+
 ## CLI
 
 ### Scan

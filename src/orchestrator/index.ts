@@ -2,6 +2,7 @@ import { existsSync } from 'fs';
 import { join } from 'path';
 import type { Db } from '../db/index';
 import type { AgentAdapter, Task, AgentMessage } from '../agents/base';
+import { RESUMABLE_AGENT_TYPES } from '../agents/base';
 import { AgentRegistry } from '../agents/registry';
 import { WorktreeManager } from './worktree';
 import { runPreflight } from './preflight';
@@ -15,7 +16,13 @@ export interface RunningTask {
   abortController: AbortController;
 }
 
+export interface RunningThread {
+  adapter: AgentAdapter;
+  abortController: AbortController;
+}
+
 const runningTasks = new Map<string, RunningTask>();
+const runningThreads = new Map<string, RunningThread>();
 const sseClients = new Map<string, Set<(msg: AgentMessage) => void>>();
 
 /**
@@ -335,6 +342,158 @@ export class Orchestrator {
     }
 
     this.db.updateTask(taskId, { status: 'failed' });
+  }
+
+  // ── Threads ───────────────────────────────────────────────
+  //
+  // A thread is a read-only agent conversation (brainstorm / insights): no
+  // preflight, no worktree, no commit/push/PR, no deploy. It runs in Claude's
+  // `plan` mode against the project's real repo and persists session_id so the
+  // conversation resumes turn after turn. Claude-only — resume needs a
+  // session_id only Claude emits.
+
+  async dispatchThread(threadId: string): Promise<void> {
+    const thread = this.db.getThread(threadId);
+    if (!thread) throw new Error(`Thread ${threadId} not found`);
+
+    const project = this.db.getProject(thread.project_id);
+    if (!project) throw new Error(`Project ${thread.project_id} not found`);
+
+    const profileId = thread.agent_profile_id ?? project.agent_profile_id;
+    const profile = profileId ? this.db.getAgentProfile(profileId) : undefined;
+    const agentType = profile?.agent_type ?? 'claude';
+
+    // Threads need resume support: claude (native), gemini/glm (history-based).
+    if (!RESUMABLE_AGENT_TYPES.includes(agentType)) {
+      throw new Error(`Threads require an agent that supports resume (claude, gemini, glm). Got: ${agentType}`);
+    }
+
+    const apiKey = profile?.credentials_encrypted ?? undefined;
+    const effectiveModel = thread.model ?? profile?.model ?? getDefaultModel(agentType);
+
+    // The first user turn was persisted by the route before dispatching.
+    const userMessages = this.db.getThreadMessages(threadId);
+    const prompt = userMessages.find(m => m.role === 'user')?.chunk ?? '';
+    if (!prompt) throw new Error('Thread has no first message to send');
+
+    const stub = { id: threadId, agent_profile_id: thread.agent_profile_id, description: '' } as unknown as Task;
+    const adapter = profile ? this.registry.resolve(profile) : this.registry.resolveByType(agentType);
+    const abort = new AbortController();
+
+    await adapter.start(stub, project.local_path, prompt, effectiveModel ?? undefined, { permissionMode: 'plan' });
+
+    runningThreads.set(threadId, { adapter, abortController: abort });
+    createTokenTracker(threadId);
+
+    this.processThreadStream(threadId, adapter);
+  }
+
+  private async processThreadStream(threadId: string, adapter: AgentAdapter): Promise<void> {
+    let sessionId: string | null = null;
+
+    try {
+      for await (const message of adapter.stream()) {
+        this.broadcastToSSEClients(threadId, message);
+
+        if (message.type === 'text') {
+          // The SDK surfaces session_id as a synthetic {"session_id":"..."} text
+          // message — capture it, but don't store it as a chat message.
+          try {
+            const parsed = JSON.parse(message.content);
+            if (parsed && typeof parsed.session_id === 'string') {
+              sessionId = parsed.session_id;
+              continue;
+            }
+          } catch {}
+          try { this.db.appendThreadMessage(threadId, 'agent', message.content); } catch {}
+        }
+
+        if (message.type === 'tool_use') {
+          try { this.db.appendThreadMessage(threadId, 'agent', `[tool_use] ${message.content}`); } catch {}
+        }
+
+        if (message.type === 'done') {
+          const usage = adapter.getTokenUsage();
+          updateTokenUsage(threadId, usage);
+          try {
+            this.db.updateThread(threadId, {
+              token_usage: JSON.stringify(usage),
+              session_id: sessionId,
+            });
+          } catch {}
+        }
+
+        if (message.type === 'error') {
+          try { this.db.appendThreadMessage(threadId, 'agent', `[error] ${message.content}`); } catch {}
+        }
+      }
+    } catch (err: any) {
+      if (err.name !== 'AbortError') {
+        const msg = err.message ?? String(err);
+        try { this.db.appendThreadMessage(threadId, 'agent', `[error] ${msg}`); } catch {}
+      }
+    } finally {
+      // Persist session_id even if the turn errored before `done`, so the thread
+      // stays resumable as long as the SDK surfaced one.
+      if (sessionId) {
+        try { this.db.updateThread(threadId, { session_id: sessionId }); } catch {}
+      }
+      runningThreads.delete(threadId);
+    }
+  }
+
+  /**
+   * Subsequent turn of a thread: resume the persisted Claude session. Throws if a
+   * turn is already in progress (the route maps that to 409) or if no session_id
+   * was captured on the first turn.
+   */
+  async replyThread(threadId: string, message: string): Promise<void> {
+    if (runningThreads.has(threadId)) {
+      throw new Error('A turn is already in progress for this thread');
+    }
+
+    const thread = this.db.getThread(threadId);
+    if (!thread) throw new Error(`Thread ${threadId} not found`);
+    if (!thread.session_id) {
+      throw new Error('Thread has no session_id yet; the first turn may not have completed.');
+    }
+
+    const project = this.db.getProject(thread.project_id);
+    if (!project) throw new Error(`Project ${thread.project_id} not found`);
+
+    const profileId = thread.agent_profile_id ?? project.agent_profile_id;
+    const profile = profileId ? this.db.getAgentProfile(profileId) : undefined;
+    const agentType = profile?.agent_type ?? 'claude';
+
+    const apiKey = profile?.credentials_encrypted ?? undefined;
+    const effectiveModel = thread.model ?? profile?.model ?? getDefaultModel(agentType);
+
+    this.db.appendThreadMessage(threadId, 'user', message);
+
+    const adapter = profile ? this.registry.resolve(profile) : this.registry.resolveByType(agentType);
+    const abort = new AbortController();
+
+    await adapter.resume(thread.session_id, message, {
+      apiKey,
+      model: effectiveModel ?? undefined,
+      permissionMode: 'plan',
+      cwd: project.local_path,
+    });
+
+    runningThreads.set(threadId, { adapter, abortController: abort });
+    createTokenTracker(threadId);
+
+    this.processThreadStream(threadId, adapter);
+  }
+
+  async killThread(threadId: string): Promise<void> {
+    const running = runningThreads.get(threadId);
+    if (running) {
+      await running.adapter.kill();
+      running.abortController.abort();
+      runningThreads.delete(threadId);
+    }
+    // No worktree to clean up — threads run read-only against the project repo.
   }
 
   // ── SSE ───────────────────────────────────────────────────

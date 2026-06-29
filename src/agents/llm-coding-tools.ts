@@ -99,3 +99,16 @@ When given a task:
 6. Open a PR against main with a summary of what changed and why
 
 Work autonomously. Use the bash tool for git operations. Do not ask for confirmation before making changes.`;
+
+/** Read-only system prompt for threads (brainstorm / insights). */
+export const READONLY_AGENT_SYSTEM_PROMPT = `You are a read-only coding assistant helping the user think through their codebase.
+You can read files to understand the code, but you must NOT modify anything: do not write or edit files, do not run commands that change state, and do not commit, push, or open pull requests.
+Use read_file to explore when useful. Your job is to answer questions, explain code, brainstorm approaches, and surface insights.`;
+
+/**
+ * Tools available in read-only ("plan") mode. Only read_file is exposed so the
+ * agent can look but not touch — the equivalent of Claude's plan mode for the
+ * CLI/API adapters that have no native permission concept.
+ */
+export const READONLY_TOOL_DEFINITIONS = TOOL_DEFINITIONS.filter(t => t.name === 'read_file');
+

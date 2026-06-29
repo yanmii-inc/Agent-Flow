@@ -101,4 +101,32 @@ ALTER TABLE tasks ADD COLUMN model TEXT;
 ALTER TABLE projects ADD COLUMN source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('manual', 'scan'));
 `,
   },
+  {
+    version: 5,
+    // Threads: first-class, non-PR agent conversations (brainstorm / insights).
+    // Mirrors tasks/task_logs but drops the PR-lifecycle columns — a thread has
+    // no status, worktree, or PR; it just persists session_id for resume.
+    sql: `
+CREATE TABLE IF NOT EXISTS threads (
+  id               TEXT PRIMARY KEY,
+  project_id       TEXT NOT NULL REFERENCES projects(id),
+  agent_profile_id TEXT REFERENCES agent_profiles(id),
+  title            TEXT,
+  session_id       TEXT,
+  model            TEXT,
+  token_usage      TEXT,
+  created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS thread_messages (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  thread_id  TEXT NOT NULL REFERENCES threads(id),
+  role       TEXT NOT NULL CHECK(role IN ('user','agent')),
+  chunk      TEXT NOT NULL,
+  timestamp  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_threads_project_id ON threads(project_id);
+CREATE INDEX IF NOT EXISTS idx_thread_messages_thread_id ON thread_messages(thread_id);
+`,
+  },
 ];

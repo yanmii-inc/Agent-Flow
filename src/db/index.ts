@@ -6,9 +6,12 @@ import type {
   AgentProfile,
   Task,
   TaskLog,
+  Thread,
+  ThreadMessage,
   CreateProjectInput,
   CreateAgentProfileInput,
   CreateTaskInput,
+  CreateThreadInput,
   CreateDeployTargetInput,
 } from '../agents/base';
 
@@ -102,6 +105,12 @@ export class Db {
       for (const taskId of taskIds) {
         this.db.prepare('DELETE FROM task_logs WHERE task_id = ?').run(taskId);
         this.db.prepare('DELETE FROM tasks WHERE id = ?').run(taskId);
+      }
+      const threadIds = (this.db.prepare('SELECT id FROM threads WHERE project_id = ?').all(id) as Pick<Thread, 'id'>[])
+        .map(r => r.id);
+      for (const threadId of threadIds) {
+        this.db.prepare('DELETE FROM thread_messages WHERE thread_id = ?').run(threadId);
+        this.db.prepare('DELETE FROM threads WHERE id = ?').run(threadId);
       }
       this.db.prepare('DELETE FROM deploy_targets WHERE project_id = ?').run(id);
       this.db.prepare('DELETE FROM projects WHERE id = ?').run(id);
@@ -250,6 +259,87 @@ export class Db {
     return this.db.prepare(
       'SELECT * FROM task_logs WHERE task_id = ? ORDER BY id ASC'
     ).all(taskId) as TaskLog[];
+  }
+
+  // ── Threads ───────────────────────────────────────────────
+
+  createThread(input: CreateThreadInput): Thread {
+    const id = crypto.randomUUID();
+    const title = input.title ?? input.message.slice(0, 60);
+    const stmt = this.db.prepare(
+      `INSERT INTO threads (id, project_id, agent_profile_id, title, model)
+       VALUES (?, ?, ?, ?, ?)`
+    );
+    stmt.run(id, input.project_id, input.agent_profile_id ?? null, title, input.model ?? null);
+    return this.getThread(id)!;
+  }
+
+  getThread(id: string): Thread | undefined {
+    return this.db.prepare('SELECT * FROM threads WHERE id = ?').get(id) as Thread | undefined;
+  }
+
+  listThreads(projectId?: string): Thread[] {
+    if (projectId) {
+      return this.db.prepare('SELECT * FROM threads WHERE project_id = ? ORDER BY created_at DESC').all(projectId) as Thread[];
+    }
+    return this.db.prepare('SELECT * FROM threads ORDER BY created_at DESC').all() as Thread[];
+  }
+
+  updateThread(id: string, updates: Partial<Omit<Thread, 'id' | 'created_at'>>): Thread | undefined {
+    const fields = Object.keys(updates).filter(k => k !== 'id' && k !== 'created_at');
+    if (fields.length === 0) return this.getThread(id);
+    const setClause = fields.map(f => `${f} = ?`).join(', ');
+    const values = fields.map(f => (updates as any)[f]);
+    this.db.prepare(`UPDATE threads SET ${setClause}, updated_at = datetime('now') WHERE id = ?`).run(...values, id);
+    return this.getThread(id);
+  }
+
+  deleteThread(id: string): boolean {
+    this.db.prepare('DELETE FROM thread_messages WHERE thread_id = ?').run(id);
+    const info = this.db.prepare('DELETE FROM threads WHERE id = ?').run(id);
+    return info.changes > 0;
+  }
+
+  // ── Thread Messages ───────────────────────────────────────
+
+  appendThreadMessage(threadId: string, role: 'user' | 'agent', chunk: string): ThreadMessage {
+    const stmt = this.db.prepare(
+      `INSERT INTO thread_messages (thread_id, role, chunk) VALUES (?, ?, ?)`
+    );
+    const info = stmt.run(threadId, role, chunk);
+    return {
+      id: info.lastInsertRowid as number,
+      thread_id: threadId,
+      role,
+      chunk,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  getThreadMessages(threadId: string, sinceId?: number): ThreadMessage[] {
+    if (sinceId) {
+      return this.db.prepare(
+        'SELECT * FROM thread_messages WHERE thread_id = ? AND id > ? ORDER BY id ASC'
+      ).all(threadId, sinceId) as ThreadMessage[];
+    }
+    return this.db.prepare(
+      'SELECT * FROM thread_messages WHERE thread_id = ? ORDER BY id ASC'
+    ).all(threadId) as ThreadMessage[];
+  }
+
+  /**
+   * Conversation history for resume, keyed by an opaque session id. A UUID lives
+   * in exactly one of thread_messages / task_logs, so we return whichever table
+   * has rows. Used by adapters (gemini/glm) that rebuild context from history.
+   */
+  getSessionHistory(id: string): { id: number; role: 'user' | 'agent'; chunk: string }[] {
+    const threads = this.db.prepare(
+      'SELECT id, role, chunk FROM thread_messages WHERE thread_id = ? ORDER BY id ASC'
+    ).all(id) as { id: number; role: 'user' | 'agent'; chunk: string }[];
+    if (threads.length) return threads;
+    return this.db.prepare(
+      'SELECT id, role, chunk FROM task_logs WHERE task_id = ? ORDER BY id ASC'
+    ).all(id) as { id: number; role: 'user' | 'agent'; chunk: string }[];
   }
 
   // ── Token Usage ───────────────────────────────────────────

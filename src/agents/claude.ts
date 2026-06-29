@@ -4,7 +4,7 @@ import type {
   SDKAssistantMessage,
   SDKResultMessage,
 } from '@anthropic-ai/claude-agent-sdk';
-import type { AgentAdapter, AgentMessage, TokenUsage, Task } from './base';
+import type { AgentAdapter, AgentMessage, TokenUsage, Task, AgentStartOptions, AgentResumeOptions } from './base';
 import type { Db } from '../db/index';
 
 type SDKTextContent = {
@@ -25,7 +25,7 @@ export class ClaudeAdapter implements AgentAdapter {
   private model: string | undefined;
   private apiKey: string | undefined;
 
-  async start(task: Task, worktreePath: string, prompt?: string, model?: string): Promise<void> {
+  async start(task: Task, worktreePath: string, prompt?: string, model?: string, opts?: AgentStartOptions): Promise<void> {
     this.abortController = new AbortController();
 
     const profile = task.agent_profile_id ? this.db.getAgentProfile(task.agent_profile_id) : undefined;
@@ -34,7 +34,7 @@ export class ClaudeAdapter implements AgentAdapter {
 
     const options: Record<string, any> = {
       cwd: worktreePath,
-      permissionMode: 'acceptEdits',
+      permissionMode: opts?.permissionMode ?? 'acceptEdits',
     };
 
     if (this.apiKey) {
@@ -52,18 +52,26 @@ export class ClaudeAdapter implements AgentAdapter {
     this.activeStream = this.makeStream(gen);
   }
 
-  async resume(sessionId: string, message: string): Promise<void> {
+  async resume(sessionId: string, message: string, opts?: AgentResumeOptions): Promise<void> {
     this.abortController = new AbortController();
+
+    // Resolve creds/model so resume works on a freshly-resolved adapter (e.g. a
+    // thread resuming after a server restart, with no prior start() this session).
+    this.apiKey = opts?.apiKey ?? this.apiKey;
+    this.model = opts?.model ?? this.model;
 
     const options: Record<string, any> = {
       resume: sessionId,
-      permissionMode: 'acceptEdits',
+      permissionMode: opts?.permissionMode ?? 'acceptEdits',
     };
     if (this.apiKey) {
       options.apiKey = this.apiKey;
     }
     if (this.model) {
       options.model = this.model;
+    }
+    if (opts?.cwd) {
+      options.cwd = opts.cwd;
     }
 
     const gen = query({
