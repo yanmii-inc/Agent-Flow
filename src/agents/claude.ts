@@ -2,15 +2,11 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type {
   SDKMessage,
   SDKAssistantMessage,
+  SDKUserMessage,
   SDKResultMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { AgentAdapter, AgentMessage, TokenUsage, Task, AgentStartOptions, AgentResumeOptions } from './base';
 import type { Db } from '../db/index';
-
-type SDKTextContent = {
-  type: 'text';
-  text: string;
-};
 
 export class ClaudeAdapter implements AgentAdapter {
   private db: Db;
@@ -86,16 +82,18 @@ export class ClaudeAdapter implements AgentAdapter {
     const self = this;
     return {
       [Symbol.asyncIterator]: async function* () {
+        let sessionIdEmitted = false;
         try {
           for await (const msg of gen) {
-            const mapped = mapSDKMessage(msg);
-            if (mapped) yield mapped;
-
-            // Extract session_id from any message type that has it
+            // Surface session_id once (so the orchestrator can capture it) rather
+            // than repeating the marker after every message.
             const anyMsg = msg as Record<string, unknown>;
-            if (anyMsg.session_id && typeof anyMsg.session_id === 'string') {
-              yield { type: 'text' as const, content: JSON.stringify({ session_id: anyMsg.session_id }), timestamp: new Date() };
+            if (!sessionIdEmitted && anyMsg.session_id && typeof anyMsg.session_id === 'string') {
+              sessionIdEmitted = true;
+              yield { type: 'text', content: JSON.stringify({ session_id: anyMsg.session_id }), timestamp: new Date() };
             }
+
+            for (const mapped of mapSDKMessage(msg)) yield mapped;
 
             // Track token usage from result messages
             if (msg.type === 'result') {
@@ -112,10 +110,10 @@ export class ClaudeAdapter implements AgentAdapter {
           }
         } catch (err: any) {
           if (err.name !== 'AbortError') {
-            yield { type: 'error' as const, content: err.message ?? String(err), timestamp: new Date() };
+            yield { type: 'error', content: err.message ?? String(err), timestamp: new Date() };
           }
         }
-        yield { type: 'done' as const, content: '', timestamp: new Date() };
+        yield { type: 'done', content: '', timestamp: new Date() };
       },
     };
   }
@@ -140,37 +138,69 @@ export class ClaudeAdapter implements AgentAdapter {
   }
 }
 
-function mapSDKMessage(msg: SDKMessage): AgentMessage | null {
+function mapSDKMessage(msg: SDKMessage): AgentMessage[] {
   switch (msg.type) {
     case 'assistant': {
       const assistantMsg = msg as SDKAssistantMessage;
-      const textBlocks = (assistantMsg.message.content as SDKTextContent[])?.filter((c): c is SDKTextContent => c.type === 'text') ?? [];
-      const text = textBlocks.map(b => b.text).join('\n');
-      if (!text) return null;
-      return { type: 'text', content: text, timestamp: new Date() };
+      const blocks = (assistantMsg.message.content ?? []) as any[];
+      const out: AgentMessage[] = [];
+      const text = blocks
+        .filter(b => b.type === 'text')
+        .map(b => b.text as string)
+        .join('\n');
+      if (text) out.push({ type: 'text', content: text, timestamp: new Date() });
+      for (const b of blocks) {
+        if (b.type === 'tool_use') {
+          out.push({
+            type: 'tool_use',
+            content: `${b.name}(${JSON.stringify(b.input ?? {})})`,
+            tool: b.name as string,
+            args: (b.input ?? {}) as Record<string, unknown>,
+            timestamp: new Date(),
+          });
+        }
+      }
+      return out;
+    }
+    case 'user': {
+      // The SDK emits user messages that wrap the tool results it already ran.
+      const userMsg = msg as SDKUserMessage;
+      const content = (userMsg.message as any).content;
+      const blocks = Array.isArray(content) ? content : [];
+      const out: AgentMessage[] = [];
+      for (const b of blocks) {
+        if (b && typeof b === 'object' && b.type === 'tool_result') {
+          const raw = b.content;
+          const output = typeof raw === 'string'
+            ? raw
+            : Array.isArray(raw)
+              ? raw.map((p: any) => (typeof p === 'string' ? p : p?.text ?? '')).join('')
+              : JSON.stringify(raw ?? '');
+          out.push({
+            type: 'tool_result',
+            content: output,
+            output,
+            isError: b.is_error === true,
+            timestamp: new Date(),
+          });
+        }
+      }
+      return out;
     }
     case 'result': {
       const result = msg as SDKResultMessage;
       if (result.subtype === 'success') {
-        return { type: 'text', content: result.result ?? '', timestamp: new Date() };
+        return [{ type: 'text', content: result.result ?? '', timestamp: new Date() }];
       }
       const errors = (result as any).errors ?? [];
-      return { type: 'error', content: errors.join('\n') || 'Unknown error', timestamp: new Date() };
+      return [{ type: 'error', content: errors.join('\n') || 'Unknown error', timestamp: new Date() }];
     }
     case 'stream_event': {
-      const seMsg = msg as any;
-      const delta = seMsg.event?.delta?.text;
-      if (delta) {
-        return { type: 'text', content: delta, timestamp: new Date() };
-      }
-      return null;
+      const delta = (msg as any).event?.delta?.text;
+      if (delta) return [{ type: 'text', content: delta, timestamp: new Date() }];
+      return [];
     }
-    case 'system':
-    case 'user':
-    case 'auth_status':
-    case 'tool_progress':
-      return null;
     default:
-      return null;
+      return [];
   }
 }

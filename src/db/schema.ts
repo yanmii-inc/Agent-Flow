@@ -129,4 +129,17 @@ CREATE INDEX IF NOT EXISTS idx_threads_project_id ON threads(project_id);
 CREATE INDEX IF NOT EXISTS idx_thread_messages_thread_id ON thread_messages(thread_id);
 `,
   },
+  {
+    version: 6,
+    // Structured log events: add a type discriminator and a JSON `meta` column to
+    // both log tables so the stream/UI can render a real activity timeline
+    // (tool_use / tool_result / file_change) instead of flat text. Existing rows
+    // default to type='text', meta=NULL — fully backward compatible.
+    sql: `
+ALTER TABLE task_logs ADD COLUMN type TEXT NOT NULL DEFAULT 'text';
+ALTER TABLE task_logs ADD COLUMN meta TEXT;
+ALTER TABLE thread_messages ADD COLUMN type TEXT NOT NULL DEFAULT 'text';
+ALTER TABLE thread_messages ADD COLUMN meta TEXT;
+`,
+  },
 ];

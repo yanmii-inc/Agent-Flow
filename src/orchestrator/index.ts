@@ -91,6 +91,14 @@ async function pollGitHub(
   }
 }
 
+/** Serialize the structured fields of an AgentMessage into a JSON `meta` string. */
+function eventMeta(msg: AgentMessage): string | null {
+  if (msg.type === 'tool_use') return JSON.stringify({ tool: msg.tool, args: msg.args });
+  if (msg.type === 'tool_result') return JSON.stringify({ tool: msg.tool, isError: msg.isError, durationMs: msg.durationMs });
+  if (msg.type === 'file_change') return JSON.stringify({ path: msg.path, diff: msg.diff });
+  return null;
+}
+
 export class Orchestrator {
   private db: Db;
   private registry: AgentRegistry;
@@ -177,18 +185,15 @@ export class Orchestrator {
       for await (const message of adapter.stream()) {
         this.broadcastToSSEClients(taskId, message);
 
+        // Capture the session marker without storing it as a log row.
         if (message.type === 'text') {
-          this.db.appendLog(taskId, 'agent', message.content);
           try {
             const parsed = JSON.parse(message.content);
-            if (parsed.session_id) {
+            if (parsed && typeof parsed.session_id === 'string') {
               sessionId = parsed.session_id;
+              continue;
             }
           } catch {}
-        }
-
-        if (message.type === 'tool_use') {
-          this.db.appendLog(taskId, 'agent', `[tool_use] ${message.content}`);
         }
 
         if (message.type === 'done') {
@@ -203,21 +208,26 @@ export class Orchestrator {
           if (currentTask?.branch_name) {
             await this.waitForPR(taskId, currentTask.branch_name, owner, repo, repoPath, githubToken, wt);
           }
+          continue;
         }
 
         if (message.type === 'error') {
-          this.db.appendLog(taskId, 'agent', `[error] ${message.content}`);
+          this.db.appendLog(taskId, 'agent', message.content, 'error');
           this.db.updateTask(taskId, { status: 'failed' });
           const currentTask = this.db.getTask(taskId);
           if (currentTask?.worktree_path) {
             await wt.cleanup(currentTask.worktree_path);
           }
+          continue;
         }
+
+        // text / tool_use / tool_result / file_change → structured log row
+        this.db.appendLog(taskId, 'agent', message.content, message.type, eventMeta(message));
       }
     } catch (err: any) {
       if (err.name !== 'AbortError') {
         const msg = err.message ?? String(err);
-        this.db.appendLog(taskId, 'agent', `[error] ${msg}`);
+        this.db.appendLog(taskId, 'agent', msg, 'error');
         this.db.updateTask(taskId, { status: 'failed' });
         const currentTask = this.db.getTask(taskId);
         if (currentTask?.worktree_path) {
@@ -395,9 +405,8 @@ export class Orchestrator {
       for await (const message of adapter.stream()) {
         this.broadcastToSSEClients(threadId, message);
 
+        // Capture the session marker without storing it as a message.
         if (message.type === 'text') {
-          // The SDK surfaces session_id as a synthetic {"session_id":"..."} text
-          // message — capture it, but don't store it as a chat message.
           try {
             const parsed = JSON.parse(message.content);
             if (parsed && typeof parsed.session_id === 'string') {
@@ -405,11 +414,6 @@ export class Orchestrator {
               continue;
             }
           } catch {}
-          try { this.db.appendThreadMessage(threadId, 'agent', message.content); } catch {}
-        }
-
-        if (message.type === 'tool_use') {
-          try { this.db.appendThreadMessage(threadId, 'agent', `[tool_use] ${message.content}`); } catch {}
         }
 
         if (message.type === 'done') {
@@ -421,16 +425,21 @@ export class Orchestrator {
               session_id: sessionId,
             });
           } catch {}
+          continue;
         }
 
         if (message.type === 'error') {
-          try { this.db.appendThreadMessage(threadId, 'agent', `[error] ${message.content}`); } catch {}
+          try { this.db.appendThreadMessage(threadId, 'agent', message.content, 'error'); } catch {}
+          continue;
         }
+
+        // text / tool_use / tool_result / file_change → structured row
+        try { this.db.appendThreadMessage(threadId, 'agent', message.content, message.type, eventMeta(message)); } catch {}
       }
     } catch (err: any) {
       if (err.name !== 'AbortError') {
         const msg = err.message ?? String(err);
-        try { this.db.appendThreadMessage(threadId, 'agent', `[error] ${msg}`); } catch {}
+        try { this.db.appendThreadMessage(threadId, 'agent', msg, 'error'); } catch {}
       }
     } finally {
       // Persist session_id even if the turn errored before `done`, so the thread

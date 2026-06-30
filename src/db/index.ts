@@ -236,16 +236,18 @@ export class Db {
 
   // ── Task Logs ─────────────────────────────────────────────
 
-  appendLog(taskId: string, role: 'user' | 'agent', chunk: string): TaskLog {
+  appendLog(taskId: string, role: 'user' | 'agent', chunk: string, type: string = 'text', meta: string | null = null): TaskLog {
     const stmt = this.db.prepare(
-      `INSERT INTO task_logs (task_id, role, chunk) VALUES (?, ?, ?)`
+      `INSERT INTO task_logs (task_id, role, chunk, type, meta) VALUES (?, ?, ?, ?, ?)`
     );
-    const info = stmt.run(taskId, role, chunk);
+    const info = stmt.run(taskId, role, chunk, type, meta);
     return {
       id: info.lastInsertRowid as number,
       task_id: taskId,
       role,
       chunk,
+      type,
+      meta,
       timestamp: new Date().toISOString(),
     };
   }
@@ -302,16 +304,18 @@ export class Db {
 
   // ── Thread Messages ───────────────────────────────────────
 
-  appendThreadMessage(threadId: string, role: 'user' | 'agent', chunk: string): ThreadMessage {
+  appendThreadMessage(threadId: string, role: 'user' | 'agent', chunk: string, type: string = 'text', meta: string | null = null): ThreadMessage {
     const stmt = this.db.prepare(
-      `INSERT INTO thread_messages (thread_id, role, chunk) VALUES (?, ?, ?)`
+      `INSERT INTO thread_messages (thread_id, role, chunk, type, meta) VALUES (?, ?, ?, ?, ?)`
     );
-    const info = stmt.run(threadId, role, chunk);
+    const info = stmt.run(threadId, role, chunk, type, meta);
     return {
       id: info.lastInsertRowid as number,
       thread_id: threadId,
       role,
       chunk,
+      type,
+      meta,
       timestamp: new Date().toISOString(),
     };
   }
@@ -332,14 +336,14 @@ export class Db {
    * in exactly one of thread_messages / task_logs, so we return whichever table
    * has rows. Used by adapters (gemini/glm) that rebuild context from history.
    */
-  getSessionHistory(id: string): { id: number; role: 'user' | 'agent'; chunk: string }[] {
+  getSessionHistory(id: string): { id: number; role: 'user' | 'agent'; chunk: string; type: string }[] {
     const threads = this.db.prepare(
-      'SELECT id, role, chunk FROM thread_messages WHERE thread_id = ? ORDER BY id ASC'
-    ).all(id) as { id: number; role: 'user' | 'agent'; chunk: string }[];
+      'SELECT id, role, chunk, type FROM thread_messages WHERE thread_id = ? ORDER BY id ASC'
+    ).all(id) as { id: number; role: 'user' | 'agent'; chunk: string; type: string }[];
     if (threads.length) return threads;
     return this.db.prepare(
-      'SELECT id, role, chunk FROM task_logs WHERE task_id = ? ORDER BY id ASC'
-    ).all(id) as { id: number; role: 'user' | 'agent'; chunk: string }[];
+      'SELECT id, role, chunk, type FROM task_logs WHERE task_id = ? ORDER BY id ASC'
+    ).all(id) as { id: number; role: 'user' | 'agent'; chunk: string; type: string }[];
   }
 
   // ── Token Usage ───────────────────────────────────────────

@@ -40,6 +40,7 @@ interface OpenAiResponse {
 interface HistoryRow {
   role: 'user' | 'agent';
   chunk: string;
+  type: string;
 }
 
 export class GlmAdapter implements AgentAdapter {
@@ -101,6 +102,9 @@ export class GlmAdapter implements AgentAdapter {
   private buildMessagesFromHistory(rows: HistoryRow[], systemPrompt: string): OpenAiMessage[] {
     const messages: OpenAiMessage[] = [{ role: 'system', content: systemPrompt }];
     for (const row of rows) {
+      // Only rebuild from actual conversation text — skip tool_use / tool_result
+      // / error rows (and the session marker within text).
+      if (row.type !== 'text') continue;
       if (this.isLogNoise(row.chunk)) continue;
       messages.push({
         role: row.role === 'user' ? 'user' : 'assistant',
@@ -169,10 +173,22 @@ export class GlmAdapter implements AgentAdapter {
           this.messageQueue.push({
             type: 'tool_use',
             content: `${tc.function.name}(${tc.function.arguments})`,
+            tool: tc.function.name,
+            args,
             timestamp: new Date(),
           });
 
+          const toolStart = Date.now();
           const result = await executeTool(toolCall, cwd);
+          this.messageQueue.push({
+            type: 'tool_result',
+            content: result.result,
+            output: result.result,
+            isError: result.isError,
+            tool: tc.function.name,
+            durationMs: Date.now() - toolStart,
+            timestamp: new Date(),
+          });
           messages.push({
             role: 'tool',
             content: result.result,

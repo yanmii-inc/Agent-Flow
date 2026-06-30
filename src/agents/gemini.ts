@@ -38,6 +38,7 @@ interface GeminiResponse {
 interface HistoryRow {
   role: 'user' | 'agent';
   chunk: string;
+  type: string;
 }
 
 export class GeminiAdapter implements AgentAdapter {
@@ -94,6 +95,9 @@ export class GeminiAdapter implements AgentAdapter {
   private buildContentsFromHistory(rows: HistoryRow[]): GeminiContent[] {
     const contents: GeminiContent[] = [];
     for (const row of rows) {
+      // Only rebuild from actual conversation text — skip tool_use / tool_result
+      // / error rows (and the session marker within text).
+      if (row.type !== 'text') continue;
       if (this.isLogNoise(row.chunk)) continue;
       if (row.role === 'user') {
         contents.push({ role: 'user', parts: [{ text: row.chunk }] });
@@ -178,10 +182,22 @@ export class GeminiAdapter implements AgentAdapter {
           this.messageQueue.push({
             type: 'tool_use',
             content: `${fc.functionCall.name}(${JSON.stringify(fc.functionCall.args)})`,
+            tool: fc.functionCall.name,
+            args: fc.functionCall.args,
             timestamp: new Date(),
           });
 
+          const toolStart = Date.now();
           const result = await executeTool(toolCall, cwd);
+          this.messageQueue.push({
+            type: 'tool_result',
+            content: result.result,
+            output: result.result,
+            isError: result.isError,
+            tool: fc.functionCall.name,
+            durationMs: Date.now() - toolStart,
+            timestamp: new Date(),
+          });
           toolResultParts.push({
             functionResponse: {
               name: fc.functionCall.name,

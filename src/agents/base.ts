@@ -65,6 +65,10 @@ export interface TaskLog {
   task_id: string;
   role: 'user' | 'agent';
   chunk: string;
+  /** Event type — 'text' for legacy rows, or a structured type (tool_use, tool_result, ...). */
+  type: string;
+  /** JSON string of structured fields for the event type, or null for plain text. */
+  meta: string | null;
   timestamp: string;
 }
 
@@ -90,6 +94,10 @@ export interface ThreadMessage {
   thread_id: string;
   role: 'user' | 'agent';
   chunk: string;
+  /** Event type — 'text' for legacy rows, or a structured type (tool_use, tool_result, ...). */
+  type: string;
+  /** JSON string of structured fields for the event type, or null for plain text. */
+  meta: string | null;
   timestamp: string;
 }
 
@@ -137,9 +145,22 @@ export interface CreateThreadInput {
 // ── Agent Interface ─────────────────────────────────────────
 
 export interface AgentMessage {
-  type: 'text' | 'tool_use' | 'tool_result' | 'error' | 'done';
+  type: 'text' | 'tool_use' | 'tool_result' | 'file_change' | 'error' | 'done';
+  /** Human-readable summary; for tool_result this mirrors `output`. */
   content: string;
   timestamp: Date;
+  /** Tool name (tool_use / tool_result). */
+  tool?: string;
+  /** Tool call arguments (tool_use). */
+  args?: Record<string, unknown>;
+  /** Tool output (tool_result). */
+  output?: string;
+  isError?: boolean;
+  /** How long the tool took, when measurable (tool_result). */
+  durationMs?: number;
+  /** File path / diff (file_change). */
+  path?: string;
+  diff?: string;
 }
 
 /**
